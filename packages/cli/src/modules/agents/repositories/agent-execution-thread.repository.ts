@@ -56,6 +56,16 @@ export type AgentExecutionThreadOwnedChanges = Partial<
 	Pick<AgentExecutionThread, 'title' | 'projectId'>
 >;
 
+function ownedSessionWhere(agentId: string, ownerId: string, threadId: string) {
+	return {
+		id: threadId,
+		agentId,
+		ownerId,
+		accessScope: 'user' as const,
+		parentThreadId: IsNull(),
+	};
+}
+
 interface AgentSessionDeletionRefs {
 	attachmentBinaryDataIds: string[];
 	executionLogs: Array<Pick<AgentExecution, 'id' | 'storedAt'>>;
@@ -432,26 +442,33 @@ export class AgentExecutionThreadRepository extends BaseRepository<AgentExecutio
 		});
 	}
 
-	/** One private session of a user with an agent. */
+	/** One top-level private session of a user with an agent. */
 	async findOwnedById(
 		agentId: string,
 		ownerId: string,
 		threadId: string,
 	): Promise<AgentExecutionThread | null> {
-		return await this.findOneBy({ id: threadId, agentId, ownerId, accessScope: 'user' });
+		return await this.findOneBy(ownedSessionWhere(agentId, ownerId, threadId));
 	}
 
 	/**
-	 * Update the editable fields of a session. The caller must check ownership
-	 * first, for example with {@link findOwnedById}.
+	 * Update the editable fields of a top-level private session of a user with
+	 * an agent. Returns false when no such session exists.
 	 */
-	async updateOwned(threadId: string, changes: AgentExecutionThreadOwnedChanges): Promise<void> {
+	async updateOwned(
+		agentId: string,
+		ownerId: string,
+		threadId: string,
+		changes: AgentExecutionThreadOwnedChanges,
+	): Promise<boolean> {
+		const where = ownedSessionWhere(agentId, ownerId, threadId);
 		const set: AgentExecutionThreadOwnedChanges = {};
 		if (changes.title !== undefined) set.title = changes.title;
 		if (changes.projectId !== undefined) set.projectId = changes.projectId;
 		// TypeORM rejects an update without values.
-		if (Object.keys(set).length === 0) return;
-		await this.update({ id: threadId }, set);
+		if (Object.keys(set).length === 0) return await this.existsBy(where);
+		const result = await this.update(where, set);
+		return result.affected === 1;
 	}
 
 	/**
@@ -485,10 +502,11 @@ export class AgentExecutionThreadRepository extends BaseRepository<AgentExecutio
 				{ beforeAt: before.updatedAt, beforeId: before.id },
 			);
 		}
+		// Order by the same expression as the keyset, so ties stored in another format stay together.
 		const threads = await query
-			.orderBy('thread.updatedAt', 'DESC')
+			.orderBy(updatedAt, 'DESC')
 			.addOrderBy('thread.id', 'DESC')
-			.take(limit + 1)
+			.limit(limit + 1)
 			.getMany();
 		const hasMore = threads.length > limit;
 		if (hasMore) threads.pop();
@@ -501,12 +519,13 @@ export class AgentExecutionThreadRepository extends BaseRepository<AgentExecutio
 		cutoff: Date,
 		limit: number,
 	): Promise<AgentExecutionThread[]> {
+		const updatedAt = this.updatedAtExpression();
 		return await this.createQueryBuilder('thread')
 			.where('thread.agentId = :agentId', { agentId })
-			.andWhere(`${this.updatedAtExpression()} < :cutoff`, { cutoff })
-			.orderBy('thread.updatedAt', 'ASC')
+			.andWhere(`${updatedAt} < :cutoff`, { cutoff })
+			.orderBy(updatedAt, 'ASC')
 			.addOrderBy('thread.id', 'ASC')
-			.take(limit)
+			.limit(limit)
 			.getMany();
 	}
 

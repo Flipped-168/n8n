@@ -115,14 +115,16 @@ describe('Agent thread repository queries for system agents', () => {
 	});
 
 	describe('findOwnedById', () => {
-		it('returns a private session only for its owner and agent', async () => {
+		it('returns a top-level private session only for its owner and agent', async () => {
 			const thread = await createThread();
 			const shared = await createThread({ accessScope: 'project', ownerId: null });
+			const child = await createThread({ parentThreadId: thread.id });
 
 			expect((await threadRepo.findOwnedById(agentId, ownerId, thread.id))?.id).toBe(thread.id);
 			expect(await threadRepo.findOwnedById(agentId, otherUserId, thread.id)).toBeNull();
 			expect(await threadRepo.findOwnedById(otherAgentId, ownerId, thread.id)).toBeNull();
 			expect(await threadRepo.findOwnedById(agentId, ownerId, shared.id)).toBeNull();
+			expect(await threadRepo.findOwnedById(agentId, ownerId, child.id)).toBeNull();
 			expect(await threadRepo.findOwnedById(agentId, ownerId, 'missing')).toBeNull();
 		});
 	});
@@ -132,26 +134,44 @@ describe('Agent thread repository queries for system agents', () => {
 			const thread = await createThread({ title: 'Old title' });
 			const otherProjectId = (await createTeamProject()).id;
 
-			await threadRepo.updateOwned(thread.id, { title: 'New title' });
+			expect(
+				await threadRepo.updateOwned(agentId, ownerId, thread.id, { title: 'New title' }),
+			).toBe(true);
 			expect(await threadRepo.findOneByOrFail({ id: thread.id })).toMatchObject({
 				title: 'New title',
 				projectId,
 			});
 
-			await threadRepo.updateOwned(thread.id, { projectId: otherProjectId });
+			await threadRepo.updateOwned(agentId, ownerId, thread.id, { projectId: otherProjectId });
 			expect(await threadRepo.findOneByOrFail({ id: thread.id })).toMatchObject({
 				title: 'New title',
 				projectId: otherProjectId,
 			});
 		});
 
+		it('does not update a session of another owner, another agent or a parent session', async () => {
+			const parent = await createThread({ title: 'Parent' });
+			const child = await createThread({ parentThreadId: parent.id, title: 'Child' });
+			const shared = await createThread({ accessScope: 'project', ownerId: null, title: 'Shared' });
+			const change = { title: 'Changed' };
+
+			expect(await threadRepo.updateOwned(agentId, otherUserId, parent.id, change)).toBe(false);
+			expect(await threadRepo.updateOwned(otherAgentId, ownerId, parent.id, change)).toBe(false);
+			expect(await threadRepo.updateOwned(agentId, ownerId, child.id, change)).toBe(false);
+			expect(await threadRepo.updateOwned(agentId, ownerId, shared.id, change)).toBe(false);
+			expect(await threadRepo.updateOwned(agentId, ownerId, 'missing', change)).toBe(false);
+			const stored = await threadRepo.findBy({});
+			expect(stored.map(({ title }) => title).sort()).toEqual(['Child', 'Parent', 'Shared']);
+		});
+
 		it('does nothing when no change is given', async () => {
 			const thread = await createThread({ title: 'Title' }, '2024-01-01T00:00:00.000Z');
 
-			await expect(threadRepo.updateOwned(thread.id, {})).resolves.toBeUndefined();
-			await expect(
-				threadRepo.updateOwned(thread.id, { title: undefined }),
-			).resolves.toBeUndefined();
+			expect(await threadRepo.updateOwned(agentId, ownerId, thread.id, {})).toBe(true);
+			expect(await threadRepo.updateOwned(agentId, ownerId, thread.id, { title: undefined })).toBe(
+				true,
+			);
+			expect(await threadRepo.updateOwned(agentId, otherUserId, thread.id, {})).toBe(false);
 			const stored = await threadRepo.findOneByOrFail({ id: thread.id });
 			expect(stored.title).toBe('Title');
 			expect(stored.updatedAt.toISOString()).toBe('2024-01-01T00:00:00.000Z');
@@ -234,6 +254,23 @@ describe('Agent thread repository queries for system agents', () => {
 					.reverse()
 					.map((id) => [id]),
 			]);
+		});
+
+		it('pages across a tie stored in two formats', async () => {
+			const tied = [];
+			for (let index = 0; index < 4; index++) tied.push(await createThread());
+			// SQLite can store the same time with and without milliseconds.
+			const formats = ["'2024-01-01 00:00:00'", "'2024-01-01 00:00:00.000'"];
+			for (const [index, thread] of tied.entries()) {
+				await threadRepo
+					.createQueryBuilder()
+					.update()
+					.set({ updatedAt: () => formats[index % 2] })
+					.where('id = :id', { id: thread.id })
+					.execute();
+			}
+
+			expect((await readAllPages(1)).flat()).toEqual(ids(tied).sort().reverse());
 		});
 
 		it('filters by title without case sensitivity and matches wildcards literally', async () => {
