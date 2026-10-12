@@ -2627,8 +2627,8 @@ describe('AgentExecutionRepository', () => {
 					projectId,
 					threadId,
 					sessionMode,
-					source: 'chat',
-					payload: { kind, message, userId: owner.id, resourceId: `draft-chat:${owner.id}` },
+					source: 'system_chat',
+					payload: { kind, message, userId: owner.id, resourceId: `system-chat:${owner.id}` },
 				};
 			}
 
@@ -2764,7 +2764,7 @@ describe('AgentExecutionRepository', () => {
 			expect((await claim(services, threadId)).item.id).toBe(reordered.id);
 		});
 
-		it('lets a user steer and reorder system agent input like Preview input', async () => {
+		it('lets a user steer and reorder system agent input on its own surface', async () => {
 			// The system kind needs a registered provider and its instance agent row.
 			const systemAgentId = 'test-system-agent';
 			const registry = new SystemAgentRegistry();
@@ -2787,11 +2787,12 @@ describe('AgentExecutionRepository', () => {
 			const systemInput = (message: string, sessionMode: 'new' | 'existing' = 'existing') => ({
 				...input(threadId, message, sessionMode),
 				agentId: systemAgentId,
+				source: 'system_chat',
 				payload: {
 					kind: 'system' as const,
 					message,
 					userId: owner.id,
-					resourceId: `draft-chat:${owner.id}`,
+					resourceId: `system-chat:${owner.id}`,
 				},
 			});
 			await enqueue(services, systemInput('Active', 'new'));
@@ -2801,10 +2802,10 @@ describe('AgentExecutionRepository', () => {
 			const c = await enqueue(services, systemInput('C'));
 			const steered = await enqueue(services, systemInput('Steer'));
 
-			expect(await services.queue.listPending({ ...target, kind: 'preview' })).toEqual({
-				items: [],
-				steerableExecutionId: active.admission.executionId,
-			});
+			// A system thread has its own chat surface, so the Preview access rule refuses it.
+			await expect(services.queue.listPending({ ...target, kind: 'preview' })).rejects.toThrow(
+				'Session not found',
+			);
 			const pending = await services.queue.listPending(target);
 			expect(pending.steerableExecutionId).toBe(active.admission.executionId);
 			expect(pending.items.map(({ id }) => id)).toEqual([b.id, c.id, steered.id]);
@@ -2815,7 +2816,7 @@ describe('AgentExecutionRepository', () => {
 					queueId: steered.id,
 					executionId: active.admission.executionId,
 				}),
-			).rejects.toThrow('no longer available');
+			).rejects.toThrow('Session not found');
 			await services.queue.steer({
 				...target,
 				queueId: steered.id,
@@ -2837,7 +2838,7 @@ describe('AgentExecutionRepository', () => {
 				{
 					...target,
 					executionId: active.admission.executionId,
-					resourceId: `draft-chat:${owner.id}`,
+					resourceId: `system-chat:${owner.id}`,
 				},
 				{ messages: [], lastCreatedAt: 0, completing: false, canContinue: true },
 				recorder,
