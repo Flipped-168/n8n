@@ -10,7 +10,7 @@ const userTable = 'user';
  * opaque reference to the review on the host, and the review state. Title,
  * URL and conflicts are read from the host and never stored.
  */
-export class CreatePromotionReviewTable1791536926722 implements ReversibleMigration {
+export class CreatePromotionReviewTable1791794659012 implements ReversibleMigration {
 	async up({ schemaBuilder: { createTable, column }, tablePrefix }: MigrationContext) {
 		await createTable(reviewTable)
 			.withColumns(
