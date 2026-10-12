@@ -479,7 +479,7 @@ function finishConnect(channelType: string) {
 	endSetupTracking(true);
 	emit('channel-connected', channelType);
 	emit('agent-changed');
-	completeAndClose();
+	if (!channelViewRef.value?.keepOpenAfterConnect) completeAndClose();
 }
 
 /** Same shape as `persistAgent`: reports its own failure and returns whether it saved. */
@@ -667,6 +667,7 @@ watch(
 					@edit="editCredential"
 					@connect="saveChannelConfig"
 					@connected="handlePlatformConnected"
+					@done="completeAndClose"
 				/>
 				<N8nText
 					v-if="saveAttempted && !currentChannelCredentialId"
