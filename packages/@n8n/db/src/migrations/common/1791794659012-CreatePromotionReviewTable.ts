@@ -1,26 +1,56 @@
 import type { MigrationContext, ReversibleMigration } from '../migration-types';
 
+const runTable = 'promotion_run';
 const reviewTable = 'promotion_review';
 const connectionTable = 'promotion_connection';
 const userTable = 'user';
 
+// Inlined on purpose: a migration must not import live enums from other packages.
+const DIRECTIONS = ['promote', 'apply'];
+const REVIEW_STATES = ['open', 'merged', 'closed', 'unavailable'];
+
 /**
- * One row per Promote that opened a review on a Git host. The row holds what
- * only n8n knows (who promoted, what was pushed, who approved in n8n), an
- * opaque reference to the review on the host, and the review state. Title,
- * URL and conflicts are read from the host and never stored.
+ * A promotion run is one Promote or Apply. A promotion review is the host
+ * review a Promote opened. The run holds what only n8n knows. The review holds
+ * the host reference and the state. Title, URL and conflicts stay on the host.
  */
 export class CreatePromotionReviewTable1791794659012 implements ReversibleMigration {
 	async up({ schemaBuilder: { createTable, column }, tablePrefix }: MigrationContext) {
-		await createTable(reviewTable)
+		await createTable(runTable)
 			.withColumns(
 				column('id').varchar(36).primary,
 				column('connectionId')
 					.varchar(36)
-					.comment('The connection that pushed the branch. NULL after the connection is deleted.'),
-				column('createdById').uuid.comment('The user who ran Promote.'),
-				column('branchName').varchar(255).notNull.comment('The promotion branch that was pushed.'),
-				column('commitSha').varchar(64).notNull.comment('The commit n8n pushed; the diff head.'),
+					.comment('The connection this run used. NULL after the connection is deleted.'),
+				column('createdById').uuid.comment('The user who ran Promote or Apply.'),
+				column('direction')
+					.varchar(16)
+					.notNull.withEnumCheck(DIRECTIONS)
+					.comment(
+						'PromotionDirection enum: "promote" pushes to the remote, "apply" imports from it.',
+					),
+				column('branchName').varchar(255).notNull.comment('The branch this run pushed or applied.'),
+				column('commitSha').varchar(64).notNull.comment('The commit this run pushed or applied.'),
+			)
+			.withCreatedAt.withForeignKey('connectionId', {
+				tableName: connectionTable,
+				columnName: 'id',
+				onDelete: 'SET NULL',
+				name: `FK_${tablePrefix}promotion_run_connectionId`,
+			})
+			.withForeignKey('createdById', {
+				tableName: userTable,
+				columnName: 'id',
+				onDelete: 'SET NULL',
+				name: `FK_${tablePrefix}promotion_run_createdById`,
+			})
+			// Foreign key index, for the SET NULL on connection delete.
+			.withIndexOn(['connectionId']);
+
+		await createTable(reviewTable)
+			.withColumns(
+				column('id').varchar(36).primary,
+				column('runId').varchar(36).notNull.comment('The promotion run that opened this review.'),
 				column('remoteReviewId')
 					.varchar(255)
 					.notNull.comment(
@@ -29,7 +59,7 @@ export class CreatePromotionReviewTable1791794659012 implements ReversibleMigrat
 				column('state')
 					.varchar(16)
 					.notNull.default("'open'")
-					.withEnumCheck(['open', 'merged', 'closed', 'unavailable'])
+					.withEnumCheck(REVIEW_STATES)
 					.comment(
 						'PromotionReviewState enum: "open", "merged", "closed", "unavailable". Only "open" rows are refreshed from the host.',
 					),
@@ -40,17 +70,11 @@ export class CreatePromotionReviewTable1791794659012 implements ReversibleMigrat
 				),
 				column('approvedAt').timestampTimezone(),
 			)
-			.withCreatedAt.withForeignKey('connectionId', {
-				tableName: connectionTable,
+			.withCreatedAt.withForeignKey('runId', {
+				tableName: runTable,
 				columnName: 'id',
-				onDelete: 'SET NULL',
-				name: `FK_${tablePrefix}promotion_review_connectionId`,
-			})
-			.withForeignKey('createdById', {
-				tableName: userTable,
-				columnName: 'id',
-				onDelete: 'SET NULL',
-				name: `FK_${tablePrefix}promotion_review_createdById`,
+				onDelete: 'CASCADE',
+				name: `FK_${tablePrefix}promotion_review_runId`,
 			})
 			.withForeignKey('approvedById', {
 				tableName: userTable,
@@ -60,11 +84,12 @@ export class CreatePromotionReviewTable1791794659012 implements ReversibleMigrat
 			})
 			// The inbox lists by state and orders by creation time.
 			.withIndexOn(['state', 'createdAt'])
-			// Foreign key index, for the SET NULL on connection delete.
-			.withIndexOn(['connectionId']);
+			// Foreign key index, for the cascade when a run is deleted.
+			.withIndexOn(['runId']);
 	}
 
 	async down({ schemaBuilder: { dropTable } }: MigrationContext) {
 		await dropTable(reviewTable);
+		await dropTable(runTable);
 	}
 }

@@ -6,17 +6,15 @@ import { DataSource, In, IsNull, type FindOptionsWhere } from '@n8n/typeorm';
 import { PromotionReview } from '../entities/promotion-review.entity';
 
 /** The caller supplies the id, so the review link can exist before the row does. */
-export type NewPromotionReview = Pick<
-	PromotionReview,
-	'id' | 'connectionId' | 'createdById' | 'branchName' | 'commitSha' | 'remoteReviewId'
->;
+export type NewPromotionReview = Pick<PromotionReview, 'id' | 'runId' | 'remoteReviewId'>;
 
 /** What a state refresh learned from the host. */
 export type PromotionReviewStateSync = Pick<PromotionReview, 'state' | 'mergedAt' | 'closedAt'>;
 
 const TERMINAL_STATES: PromotionReviewState[] = ['merged', 'closed', 'unavailable'];
 
-const WITH_PEOPLE = { connection: true, createdBy: true, approvedBy: true } as const;
+/** The run carries the connection, the creator, the branch and the commit. */
+const WITH_RUN = { run: { connection: true, createdBy: true }, approvedBy: true } as const;
 
 @Service()
 export class PromotionReviewRepository extends BaseRepository<PromotionReview> {
@@ -32,7 +30,7 @@ export class PromotionReviewRepository extends BaseRepository<PromotionReview> {
 	}
 
 	async findByIdWithRelations(id: string): Promise<PromotionReview | null> {
-		return await this.findOne({ where: { id }, relations: WITH_PEOPLE });
+		return await this.findOne({ where: { id }, relations: WITH_RUN });
 	}
 
 	/**
@@ -47,7 +45,7 @@ export class PromotionReviewRepository extends BaseRepository<PromotionReview> {
 
 		const [data, count] = await this.findAndCount({
 			where,
-			relations: WITH_PEOPLE,
+			relations: WITH_RUN,
 			order: { createdAt: 'DESC', id: 'DESC' },
 			skip: options.offset,
 			take: options.limit,
@@ -57,7 +55,7 @@ export class PromotionReviewRepository extends BaseRepository<PromotionReview> {
 
 	/** Only open rows change on the host, so a refresh reads these alone. */
 	async findOpenReviews(): Promise<PromotionReview[]> {
-		return await this.find({ where: { state: 'open' }, relations: { connection: true } });
+		return await this.find({ where: { state: 'open' }, relations: { run: { connection: true } } });
 	}
 
 	async recordSync(id: string, sync: PromotionReviewStateSync): Promise<void> {

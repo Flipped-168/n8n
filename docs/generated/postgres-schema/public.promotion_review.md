@@ -6,15 +6,12 @@
 | ---- | ---- | ------- | -------- | -------- | ------- | ------- |
 | approvedAt | timestamp(3) with time zone |  | true |  |  |  |
 | approvedById | uuid |  | true |  | [public.user](public.user.md) | The n8n user who approved the review in n8n. NULL when approval happened on the host. |
-| branchName | varchar(255) |  | false |  |  | The promotion branch that was pushed. |
 | closedAt | timestamp(3) with time zone |  | true |  |  | Mirrored from the host. |
-| commitSha | varchar(64) |  | false |  |  | The commit n8n pushed; the diff head. |
-| connectionId | varchar(36) |  | true |  | [public.promotion_connection](public.promotion_connection.md) | The connection that pushed the branch. NULL after the connection is deleted. |
 | createdAt | timestamp(3) with time zone | CURRENT_TIMESTAMP(3) | false |  |  |  |
-| createdById | uuid |  | true |  | [public.user](public.user.md) | The user who ran Promote. |
 | id | varchar(36) |  | false |  |  |  |
 | mergedAt | timestamp(3) with time zone |  | true |  |  | Mirrored from the host. |
 | remoteReviewId | varchar(255) |  | false |  |  | Opaque reference to the review on the host. The prefix names the host kind, the rest is parsed by that host client, e.g. "gitlab:\<projectId\>!\<iid\>". |
+| runId | varchar(36) |  | false |  | [public.promotion_run](public.promotion_run.md) | The promotion run that opened this review. |
 | state | varchar(16) | 'open'::character varying | false |  |  | PromotionReviewState enum: "open", "merged", "closed", "unavailable". Only "open" rows are refreshed from the host. |
 
 ## Constraints
@@ -23,14 +20,12 @@
 | ---- | ---- | ---------- |
 | CHK_promotion_review_state | CHECK | CHECK (((state)::text = ANY ((ARRAY['open'::character varying, 'merged'::character varying, 'closed'::character varying, 'unavailable'::character varying])::text[]))) |
 | FK_promotion_review_approvedById | FOREIGN KEY | FOREIGN KEY ("approvedById") REFERENCES "user"(id) ON DELETE SET NULL |
-| FK_promotion_review_connectionId | FOREIGN KEY | FOREIGN KEY ("connectionId") REFERENCES promotion_connection(id) ON DELETE SET NULL |
-| FK_promotion_review_createdById | FOREIGN KEY | FOREIGN KEY ("createdById") REFERENCES "user"(id) ON DELETE SET NULL |
+| FK_promotion_review_runId | FOREIGN KEY | FOREIGN KEY ("runId") REFERENCES promotion_run(id) ON DELETE CASCADE |
 | PK_fe93e2f1add228dc14d3330c8e5 | PRIMARY KEY | PRIMARY KEY (id) |
-| promotion_review_branchName_not_null | n | NOT NULL "branchName" |
-| promotion_review_commitSha_not_null | n | NOT NULL "commitSha" |
 | promotion_review_createdAt_not_null | n | NOT NULL "createdAt" |
 | promotion_review_id_not_null | n | NOT NULL id |
 | promotion_review_remoteReviewId_not_null | n | NOT NULL "remoteReviewId" |
+| promotion_review_runId_not_null | n | NOT NULL "runId" |
 | promotion_review_state_not_null | n | NOT NULL state |
 
 ## Indexes
@@ -38,7 +33,7 @@
 | Name | Definition |
 | ---- | ---------- |
 | IDX_82d6930410e9e6c7d04c515079 | CREATE INDEX "IDX_82d6930410e9e6c7d04c515079" ON public.promotion_review USING btree (state, "createdAt") |
-| IDX_93e4ec34f4091a0333af0076b6 | CREATE INDEX "IDX_93e4ec34f4091a0333af0076b6" ON public.promotion_review USING btree ("connectionId") |
+| IDX_8ddf41da9d492558353468b10b | CREATE INDEX "IDX_8ddf41da9d492558353468b10b" ON public.promotion_review USING btree ("runId") |
 | PK_fe93e2f1add228dc14d3330c8e5 | CREATE UNIQUE INDEX "PK_fe93e2f1add228dc14d3330c8e5" ON public.promotion_review USING btree (id) |
 
 ## Relations
@@ -47,21 +42,17 @@
 erDiagram
 
 "public.promotion_review" }o--o| "public.user" : "FOREIGN KEY (#quot;approvedById#quot;) REFERENCES #quot;user#quot;(id) ON DELETE SET NULL"
-"public.promotion_review" }o--o| "public.promotion_connection" : "FOREIGN KEY (#quot;connectionId#quot;) REFERENCES promotion_connection(id) ON DELETE SET NULL"
-"public.promotion_review" }o--o| "public.user" : "FOREIGN KEY (#quot;createdById#quot;) REFERENCES #quot;user#quot;(id) ON DELETE SET NULL"
+"public.promotion_review" }o--|| "public.promotion_run" : "FOREIGN KEY (#quot;runId#quot;) REFERENCES promotion_run(id) ON DELETE CASCADE"
 
 "public.promotion_review" {
   timestamp_3__with_time_zone approvedAt
   uuid approvedById FK
-  varchar_255_ branchName
   timestamp_3__with_time_zone closedAt
-  varchar_64_ commitSha
-  varchar_36_ connectionId FK
   timestamp_3__with_time_zone createdAt
-  uuid createdById FK
   varchar_36_ id
   timestamp_3__with_time_zone mergedAt
   varchar_255_ remoteReviewId
+  varchar_36_ runId FK
   varchar_16_ state
 }
 "public.user" {
@@ -81,14 +72,14 @@ erDiagram
   json settings
   timestamp_3__with_time_zone updatedAt
 }
-"public.promotion_connection" {
+"public.promotion_run" {
+  varchar_255_ branchName
+  varchar_64_ commitSha
+  varchar_36_ connectionId FK
   timestamp_3__with_time_zone createdAt
+  uuid createdById FK
+  varchar_16_ direction
   varchar_36_ id
-  varchar_128_ name
-  varchar_36_ providerId FK
-  varchar_16_ scope
-  json target
-  timestamp_3__with_time_zone updatedAt
 }
 ```
 

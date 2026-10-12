@@ -1,12 +1,13 @@
 import type { PromotionMergeRequestResult } from '@n8n/api-types';
 import { Logger } from '@n8n/backend-common';
 import { UrlService } from '@n8n/backend-services';
-import type { User } from '@n8n/db';
+import { TransactionRunner, type User } from '@n8n/db';
 import { Service } from '@n8n/di';
 import { generateNanoId } from '@n8n/utils/generate-nano-id';
 import { createResultError, createResultOk, type Result } from '@n8n/utils/result';
 
 import { PromotionReviewRepository } from './database/repositories/promotion-review.repository';
+import { PromotionRunRepository } from './database/repositories/promotion-run.repository';
 import {
 	GitLabMergeRequestClient,
 	toGitLabReviewId,
@@ -37,7 +38,9 @@ export type OpenReviewResult = Readonly<{
 @Service()
 export class PromotionReviewsService {
 	constructor(
+		private readonly runRepository: PromotionRunRepository,
 		private readonly reviewRepository: PromotionReviewRepository,
+		private readonly txRunner: TransactionRunner,
 		private readonly hostResolver: PromotionReviewHostResolver,
 		private readonly mergeRequests: GitLabMergeRequestClient,
 		private readonly urlService: UrlService,
@@ -85,13 +88,25 @@ export class PromotionReviewsService {
 
 		const review = await settle(
 			async () =>
-				await this.reviewRepository.insertReview({
-					id: reviewId,
-					connectionId: input.connectionId,
-					createdById: actor.id,
-					branchName,
-					commitSha,
-					remoteReviewId: toGitLabReviewId({ projectId, iid }),
+				await this.txRunner.run({}, async (ctx) => {
+					const run = await this.runRepository.insertRun(
+						{
+							connectionId: input.connectionId,
+							createdById: actor.id,
+							direction: 'promote',
+							branchName,
+							commitSha,
+						},
+						ctx,
+					);
+					return await this.reviewRepository.insertReview(
+						{
+							id: reviewId,
+							runId: run.id,
+							remoteReviewId: toGitLabReviewId({ projectId, iid }),
+						},
+						ctx,
+					);
 				}),
 		);
 		if (!review.ok) {

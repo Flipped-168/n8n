@@ -11,13 +11,12 @@ import {
 	type Relation,
 } from '@n8n/typeorm';
 
-import { PromotionConnection } from './promotion-connection.entity';
+import { PromotionRun } from './promotion-run.entity';
 
 /**
- * One Promote that opened a review on a Git host. The row holds only what n8n
- * knows and the host does not: who promoted, what was pushed, who approved in
- * n8n. The host owns the review while it is `open`; n8n owns the state once it
- * is terminal. Title, URL and conflicts are read from the host.
+ * The host review a Promote opened. The host owns the review while it is
+ * `open`. n8n owns the state once it is terminal. Title, URL and conflicts are
+ * read from the host. Who promoted, and what was pushed, live on the run.
  */
 @Entity('promotion_review')
 @Index(['state', 'createdAt'])
@@ -31,18 +30,8 @@ export class PromotionReview extends WithCreatedAt {
 	}
 
 	@Index()
-	@Column({ type: 'varchar', length: 36, nullable: true })
-	connectionId: string | null;
-
-	@Column({ type: 'uuid', nullable: true })
-	createdById: string | null;
-
-	@Column({ type: 'varchar', length: 255 })
-	branchName: string;
-
-	/** The commit n8n pushed. The diff head, and n8n's own record of what went to the branch. */
-	@Column({ type: 'varchar', length: 64 })
-	commitSha: string;
+	@Column({ type: 'varchar', length: 36 })
+	runId: string;
 
 	/**
 	 * Opaque reference to the review on the host. The prefix names the host kind
@@ -67,13 +56,9 @@ export class PromotionReview extends WithCreatedAt {
 	@DateTimeColumn({ nullable: true })
 	approvedAt: Date | null;
 
-	@ManyToOne(() => PromotionConnection, { onDelete: 'SET NULL', nullable: true })
-	@JoinColumn({ name: 'connectionId' })
-	connection: Relation<PromotionConnection> | null;
-
-	@ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
-	@JoinColumn({ name: 'createdById' })
-	createdBy: Relation<User> | null;
+	@ManyToOne(() => PromotionRun, { onDelete: 'CASCADE', nullable: false })
+	@JoinColumn({ name: 'runId' })
+	run: Relation<PromotionRun>;
 
 	@ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
 	@JoinColumn({ name: 'approvedById' })

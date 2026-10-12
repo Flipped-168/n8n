@@ -1,11 +1,13 @@
 import type { Logger } from '@n8n/backend-common';
 import type { UrlService } from '@n8n/backend-services';
-import type { User } from '@n8n/db';
+import type { TransactionRunner, User } from '@n8n/db';
 import { mock } from 'vitest-mock-extended';
 
 import { ServiceUnavailableError } from '@n8n/errors';
 
+import type { PromotionRun } from '../database/entities/promotion-run.entity';
 import type { PromotionReviewRepository } from '../database/repositories/promotion-review.repository';
+import type { PromotionRunRepository } from '../database/repositories/promotion-run.repository';
 import type {
 	GitLabMergeRequest,
 	GitLabMergeRequestClient,
@@ -15,7 +17,9 @@ import { PromotionReviewsService } from '../promotion-reviews.service';
 import type { PromotionOperationInput } from '../promotions.types';
 
 describe('PromotionReviewsService', () => {
+	const runRepository = mock<PromotionRunRepository>();
 	const reviewRepository = mock<PromotionReviewRepository>();
+	const txRunner = mock<TransactionRunner>();
 	const hostResolver = mock<PromotionReviewHostResolver>();
 	const mergeRequests = mock<GitLabMergeRequestClient>();
 	const urlService = mock<UrlService>();
@@ -23,7 +27,9 @@ describe('PromotionReviewsService', () => {
 	logger.scoped.mockReturnValue(logger);
 
 	const service = new PromotionReviewsService(
+		runRepository,
 		reviewRepository,
+		txRunner,
 		hostResolver,
 		mergeRequests,
 		urlService,
@@ -65,6 +71,8 @@ describe('PromotionReviewsService', () => {
 		urlService.getInstanceBaseUrl.mockReturnValue('https://n8n.example.com');
 		hostResolver.resolve.mockResolvedValue(host);
 		mergeRequests.createMergeRequest.mockResolvedValue(mergeRequest);
+		txRunner.run.mockImplementation(async (ctx, fn) => await fn(ctx));
+		runRepository.insertRun.mockResolvedValue(mock<PromotionRun>({ id: 'run-1' }));
 	});
 
 	it('does nothing for a connection without a host API', async () => {
@@ -74,6 +82,7 @@ describe('PromotionReviewsService', () => {
 			warnings: [],
 		});
 		expect(mergeRequests.createMergeRequest).not.toHaveBeenCalled();
+		expect(runRepository.insertRun).not.toHaveBeenCalled();
 		expect(reviewRepository.insertReview).not.toHaveBeenCalled();
 	});
 
@@ -97,14 +106,24 @@ describe('PromotionReviewsService', () => {
 		expect(mergeRequests.createMergeRequest.mock.calls[0][1].description).toContain(
 			'promotion by Ada Lovelace',
 		);
-		expect(reviewRepository.insertReview).toHaveBeenCalledWith({
-			id: reviewId,
-			connectionId: 'conn1',
-			createdById: 'actor',
-			branchName: push.branchName,
-			commitSha: push.commitSha,
-			remoteReviewId: 'gitlab:7!3',
-		});
+		expect(runRepository.insertRun).toHaveBeenCalledWith(
+			{
+				connectionId: 'conn1',
+				createdById: 'actor',
+				direction: 'promote',
+				branchName: push.branchName,
+				commitSha: push.commitSha,
+			},
+			expect.anything(),
+		);
+		expect(reviewRepository.insertReview).toHaveBeenCalledWith(
+			{
+				id: reviewId,
+				runId: 'run-1',
+				remoteReviewId: 'gitlab:7!3',
+			},
+			expect.anything(),
+		);
 	});
 
 	it('returns a warning instead of throwing when the host cannot be resolved', async () => {
@@ -128,6 +147,7 @@ describe('PromotionReviewsService', () => {
 				`The branch ${push.branchName} was pushed, but no merge request was opened: GitLab is not available. Try again later.`,
 			],
 		});
+		expect(runRepository.insertRun).not.toHaveBeenCalled();
 		expect(reviewRepository.insertReview).not.toHaveBeenCalled();
 	});
 
