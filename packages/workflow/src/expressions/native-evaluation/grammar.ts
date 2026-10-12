@@ -1,5 +1,7 @@
 import type { namedTypes } from 'ast-types';
 
+import { ExpressionExtensions } from '../../extensions';
+
 // The closed subset grammar, its operator and method allowlists, and the
 // limits the parser and the evaluator share. See index.ts for the overview.
 
@@ -174,6 +176,20 @@ export const CALLABLE_METHODS = new Set([
 	...NUMBER_METHODS.keys(),
 	...ARRAY_METHODS.keys(),
 ]);
+
+// Expression extensions the native path hands to extend(), the host dispatch
+// the engines call for them too, so both paths share one implementation and
+// its errors. Pure functions of JSON receiver and arguments only: the Date
+// extensions, the to-date conversions and randomItem are excluded, as a
+// Luxon or Date value has no representation here and a random result no
+// parity. The runtime receiver still picks the implementation (a number's
+// format() is not a date's), and a non-JSON result bails to the engine.
+const NON_JSON_EXTENSIONS = new Set(['toDate', 'toDateTime', 'randomItem']);
+export const EXTENSION_METHODS: ReadonlySet<string> = new Set(
+	ExpressionExtensions.filter((extension) => extension.typeName !== 'Date')
+		.flatMap((extension) => Object.keys(extension.functions))
+		.filter((name) => !NON_JSON_EXTENSIONS.has(name)),
+);
 
 // The engine evaluates under a timeout and a memory limit; this interpreter
 // has neither. A string or array result above this length is handed to the
